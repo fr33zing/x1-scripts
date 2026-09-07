@@ -1,0 +1,338 @@
+#!/usr/bin/env python
+
+# Requires gtk4-layer-shell
+# Requires python-vlc (python-python-vlc)
+
+from ctypes import CDLL
+
+CDLL("libgtk4-layer-shell.so")
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gtk4LayerShell", "1.0")
+
+from gi.repository import Gtk, GLib
+from gi.repository import Gtk4LayerShell as LayerShell
+
+import vlc
+
+import sys, time, os, urllib.request, json, subprocess, traceback, shlex, time
+from enum import Enum
+from typing import Optional, Generic, TypeVar
+
+NAME = sys.argv[1]  # %N
+CONTENT_PATH = sys.argv[2]  # %F
+ID = sys.argv[3]  # %K
+
+api = f"http://localhost:8080/api/v2/torrents/properties?hash={ID}"
+
+EXTRA_WAIT = 120
+INTERVAL = 1500
+STREAMING_CONTAINER_FORMATS = [
+    ".mkv",
+    ".mk3d",
+    ".mov",
+    ".qt",
+    ".asf",
+    ".wmv",
+    ".mxf",
+    ".ts",
+    ".tsv",
+    ".3gp",
+    ".3g2",
+    ".f4v",
+    ".ogv",
+    ".ogx",
+    ".webm",
+    ".rmvb",
+    ".divx",
+]
+
+
+class Status(Enum):
+    Waiting = (False, False)
+    Fatal = (False, True)
+    Ready = (True, True)
+
+    def __init__(self, should_exit, should_play):
+        self.should_exit = should_exit
+        self.should_play = should_play
+
+
+class Error(Enum):
+    NoVideoFiles = ("Waiting for video files...", Status.Waiting)
+    TooManyVideoFiles = ("Too many video files!", Status.Fatal)
+    NoVideoDuration = ("Waiting to determine video duration...", Status.Waiting)
+    WebUiUnreachable = ("Web UI unreachable!", Status.Fatal)
+    VideoUnplayable = ("Waiting for video to become playable...", Status.Waiting)
+    Buffering = ("Buffering...", Status.Waiting)
+
+    def __init__(self, message, status):
+        self.message = message
+        self.status = status
+
+
+T = TypeVar("T")
+
+
+class Result(Generic[T]):
+    value: Optional[T] = None
+    error: Optional[Error] = None
+
+    def __init__(self, value: Optional[T], error: Optional[Error]):
+        self.value = value
+        self.error = error
+
+    def is_ok(self):
+        return self.value and not self.error
+
+
+def Ok(value):
+    return Result(value, None)
+
+
+def Err(error):
+    return Result(None, error)
+
+
+class State:
+    status: Status = Status.Waiting
+    error: Optional[Error] = None
+    video_path: Optional[str] = None
+    video_duration: Optional[int] = None
+    torrent_eta: Optional[int] = None
+    video_playable: bool = False
+    autopreview_eta: Optional[int] = None
+
+    def ready(self):
+        self.error = None
+        self.status = Status.Ready
+
+
+#
+# Main logic
+#
+
+
+def on_activate(app):
+    window = Gtk.Window(application=app)
+    window.set_default_size(100, 50)
+
+    LayerShell.init_for_window(window)
+    LayerShell.set_layer(window, LayerShell.Layer.TOP)
+    LayerShell.set_anchor(window, LayerShell.Edge.TOP, True)
+    LayerShell.auto_exclusive_zone_enable(window)
+
+    title = f"Downloading torrent:\n{NAME}\n"
+    label = Gtk.Label(label=f"{title}\nInitializing...")
+    label.set_margin_top(20)
+    label.set_margin_bottom(20)
+    label.set_margin_start(20)
+    label.set_margin_end(20)
+    window.set_child(label)
+    window.present()
+
+    state = State()
+
+    def update_state(new_state):
+        state = new_state
+        lines = [title]
+
+        if state.error:
+            lines.append(state.error.message)
+
+            if state.status == Status.Fatal:
+                lines.append("\nFATAL!")
+                msg = "\n".join(lines)
+                os.system(f"notify-send -u critical 'qbittorrent-autopreview' '{msg}'")
+                nuclear_suicide()
+            else:
+                if state.error == Error.Buffering:
+                    autopreview_eta_pretty = pretty_time_delta(state.autopreview_eta)
+                    lines.append(f"Ready in about {autopreview_eta_pretty}")
+        elif state.ready:
+            lines.append("READY!")
+            finish(state.video_path)
+
+        label.set_label("\n".join(lines))
+
+    GLib.timeout_add(INTERVAL, update, state, update_state)
+
+
+def update(state, set_state):
+    try:
+        # TODO need to check if all files exist and none are videos
+
+        # Get video path
+        if not state.video_path:
+            video_path = get_video_path()
+            if video_path.is_ok():
+                state.video_path = video_path.value
+            else:
+                state.error = video_path.error
+
+        # Get video duration
+        if state.video_path and not state.video_duration:
+            video_duration = get_video_duration(state.video_path)
+            if video_duration.is_ok():
+                state.video_duration = video_duration.value
+            else:
+                state.error = video_duration.error
+
+        # Check that video is playable
+        if state.video_duration and not state.video_playable:
+            if is_valid_video_file(state.video_path):
+                state.video_playable = True
+            else:
+                state.error = Error.VideoUnplayable
+
+        # Get torrent ETA
+        if state.video_playable:
+            torrent_eta = get_torrent_eta()
+            if torrent_eta.is_ok():
+                state.torrent_eta = torrent_eta.value
+            else:
+                state.error = torrent_eta.error
+
+        # Calculate autopreview ETA
+        if state.torrent_eta:
+            state.autopreview_eta = (
+                state.torrent_eta - state.video_duration + EXTRA_WAIT
+            )
+
+            if state.autopreview_eta <= 0:
+                state.ready()
+            else:
+                state.error = Error.VideoUnplayable
+
+        set_state(state)
+    except:
+        e = shlex.quote(traceback.format_exc())
+        os.system(f"notify-send Error {e}")
+    return True
+
+
+def finish(path):
+    subprocess.Popen(
+        ["vlc", path],
+        stdin=None,
+        stdout=None,
+        stderr=None,
+    )
+    nuclear_suicide()
+
+
+#
+# Utility
+#
+
+
+def get_torrent_eta() -> Result[int]:
+    try:
+        response = urllib.request.urlopen(api)
+        eta = json.loads(response.read())["eta"]
+        return Ok(eta)
+    except:
+        return Err(Error.WebUiUnreachable)
+
+
+def get_video_duration(path) -> Result[int]:
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        output = result.stdout.splitlines()[-1]
+        duration = int(float(output))
+
+        return Ok(duration)
+    except:
+        return Err(Error.NoVideoDuration)
+
+
+def is_streamable_video_file(path):
+    if os.path.isdir(path):
+        return False
+    _, ext = os.path.splitext(path)
+    ext = ext.lower()
+    return ext in STREAMING_CONTAINER_FORMATS
+
+
+def find_all_video_paths():
+    video_paths = []
+
+    def check_files_recursive(path):
+        for entry in os.listdir(path):
+            full_path = os.path.join(path, entry)
+            if os.path.isdir(full_path):
+                check_files_recursive(full_path)
+            elif is_streamable_video_file(full_path):
+                video_paths.append(full_path)
+
+    if is_streamable_video_file(CONTENT_PATH):
+        return [CONTENT_PATH]
+    elif os.path.isdir(CONTENT_PATH):
+        check_files_recursive(CONTENT_PATH)
+    return video_paths
+
+
+def get_video_path() -> Result[str]:
+    all_video_paths = find_all_video_paths()
+    match len(all_video_paths):
+        case 0:
+            return Err(Error.NoVideoFiles)
+        case 1:
+            return Ok(all_video_paths[0])
+        case _:
+            return Err(Error.TooManyVideoFiles)
+
+
+def is_valid_video_file(path):
+    player = vlc.MediaPlayer(f"file://{path}")
+    code = player.play()
+    player.stop()
+    player.release()
+    return code == 0
+
+
+def nuclear_suicide():
+    # Nothing else works anymore...
+    # Probably would need to run the vlc checking stuff in a fork
+    pid = os.getpid()
+    os.system(f"kill -9 {pid}")
+
+
+def pretty_time_delta(seconds):
+    sign_string = "-" if seconds < 0 else ""
+    seconds = abs(int(seconds))
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    if days > 0:
+        return "%s%dd %dh %dm %ds" % (sign_string, days, hours, minutes, seconds)
+    elif hours > 0:
+        return "%s%dh %dm %ds" % (sign_string, hours, minutes, seconds)
+    elif minutes > 0:
+        return "%s%dm %ds" % (sign_string, minutes, seconds)
+    else:
+        return "%s%ds" % (sign_string, seconds)
+
+
+#
+# Entry point
+#
+
+app = Gtk.Application(application_id="com.github.fr33zing.qbittorrent_autopreview")
+app.connect("activate", on_activate)
+app.run(None)

@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+
+#
+# Configuration
+#
+
+UPDATE_HZ=3
+LAPTOP_MODE=0
+DESKTOP_MODE=1
+TV_MODE=2
+
+TV_SCREEN="WET"
+DESKTOP_SCREEN="VIZIO"
+LAPTOP_SCREEN="Built-in Screen"
+
+NATIVE_RES="1920x1200"
+TV_RES="1920x1080"
+HEADPHONES_MAC="38:18:4C:12:2B:22"
+
+TV_AUDIO_OUTPUT="HDMI-1"
+DESKTOP_AUDIO_OUTPUT="$HEADPHONES_MAC"
+
+#
+# Utility
+#
+
+set_builtin_screen_res () {
+    kscreen-doctor "output.eDP-1.mode.${1}@60"
+}
+
+set_audio_output () {
+    desired=$(tr ':' '_' <<< "$1")
+    mapfile -t sinks < <(wpctl list audio sinks)
+    for sink in "${sinks[@]}"; do
+	sink_id="$(cut -F1 <<< "$sink")"
+	if [[ "$sink" == *"$desired"* ]]; then
+	    wpctl set-mute "$sink_id" 0
+	    wpctl set-default "$sink_id"
+	else
+	    wpctl set-mute "$sink_id" 1
+	fi
+    done
+}
+
+#
+# TV MODE
+# Activated when connected to living room TV
+#
+
+tv_mode () {
+    # Adjust display resolution
+    set_builtin_screen_res $TV_RES
+
+    # Adjust display brightness
+    sb_service="org.kde.ScreenBrightness"
+    sb_path="/org/kde/ScreenBrightness"
+    mapfile -t displays < <(qdbus6 "$sb_service" "$sb_path" DisplaysDBusNames)
+    for display in "${displays[@]}"; do
+	display_path="${sb_path}/${display}"
+	label=$(qdbus6 "$sb_service" "$display_path" Label)
+	if [[ "$label" == *"$LAPTOP_SCREEN"* ]]; then
+	    qdbus6 "$sb_service" "$display_path" SetBrightness 1500 1
+	elif [[ "$label" == *"$TV_SCREEN"* ]]; then
+	    qdbus6 "$sb_service" "$display_path" SetBrightness 10000 1
+	fi
+    done
+
+    # Disconnect bluetooth headphones
+    bluetoothctl block $HEADPHONES_MAC
+    set_audio_output $TV_AUDIO_OUTPUT
+}
+
+#
+# DESKTOP MODE
+# Activated when connected to desk monitor
+#
+
+desktop_mode () {
+    # Adjust display resolution
+    set_builtin_screen_res $NATIVE_RES
+
+    # Adjust display brightness
+    qdbus6 org.kde.Solid.PowerManagement \
+          /org/kde/Solid/PowerManagement/Actions/BrightnessControl \
+	  setBrightnessSilent 10000
+
+    # Connect bluetooth headphones
+    bluetoothctl unblock $HEADPHONES_MAC
+    bluetoothctl connect $HEADPHONES_MAC
+    sleep 5
+    set_audio_output $DESKTOP_AUDIO_OUTPUT
+}
+
+#
+# LAPTOP MODE
+# Activated when disconnected from living room TV and desk monitor
+#
+
+laptop_mode () {
+    desktop_mode
+}
+
+#
+# Detection 
+#
+
+detected=0
+
+detect () {
+    outputs=$(kscreen-console outputs)
+
+    if [[ "$outputs" == *"$TV_SCREEN"* ]]; then
+        detected=$TV_MODE
+    elif [[ "$outputs" == *"$DESKTOP_SCREEN"* ]]; then
+	detected=$DESKTOP_MODE
+    else
+        detected=$LAPTOP_MODE
+    fi
+}
+
+detect
+last=$detected
+
+while true; do
+    detect
+
+    if [ "$detected" != "$last" ]; then
+        if [ "$detected" == "$TV_MODE" ]; then
+	    echo "----- TV MODE -----"
+	    tv_mode
+        elif [ "$detected" == "$DESKTOP_MODE" ]; then
+	    echo "----- DESKTOP MODE -----"
+            desktop_mode
+        else
+	    echo "----- LAPTOP MODE -----"
+	    laptop_mode
+        fi
+    fi
+
+    last=$detected
+    sleep $UPDATE_HZ
+done
