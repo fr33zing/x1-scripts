@@ -1,28 +1,44 @@
 #!/usr/bin/env bash
 
-#
-# Configuration
-#
-
-UPDATE_HZ=3
-LAPTOP_MODE=0
-DESKTOP_MODE=1
-TV_MODE=2
-
-TV_SCREEN="WET"
-DESKTOP_SCREEN="VIZIO"
-LAPTOP_SCREEN="Built-in Screen"
-
 NATIVE_RES="1920x1200"
 TV_RES="1920x1080"
 HEADPHONES_MAC="38:18:4C:12:2B:22"
-
 TV_AUDIO_OUTPUT="HDMI-1"
 DESKTOP_AUDIO_OUTPUT="$HEADPHONES_MAC"
 
 #
+# Main
+#
+
+switch_mode () {
+    echo "----- Switching mode: ${1} -----"
+    case $1 in
+	0)
+	    notify_mode_switch "Laptop"
+	    laptop_mode
+	    ;;
+	1)
+	    notify_mode_switch "Desktop"
+	    desktop_mode
+	    ;;
+	2)
+	    notify_mode_switch "Television"
+	    tv_mode
+	    ;;
+	*)
+	    echo "!!! UNDEFINED MODE !!!"
+	    laptop_mode
+	    ;;
+    esac
+}
+
+#
 # Utility
 #
+
+notify_mode_switch () {
+    notify-send "Mode switcher" "Switching to <b>${1}</b> mode..."
+}
 
 set_builtin_screen_res () {
     kscreen-doctor "output.eDP-1.mode.${1}@60"
@@ -43,8 +59,7 @@ set_audio_output () {
 }
 
 #
-# TV MODE
-# Activated when connected to living room TV
+# Modes
 #
 
 tv_mode () {
@@ -57,7 +72,7 @@ tv_mode () {
     mapfile -t displays < <(qdbus6 "$sb_service" "$sb_path" DisplaysDBusNames)
     for display in "${displays[@]}"; do
 	display_path="${sb_path}/${display}"
-	label=$(qdbus6 "$sb_service" "$display_path" Label)
+	label="$(qdbus6 "$sb_service" "$display_path" Label)"
 	if [[ "$label" == *"$LAPTOP_SCREEN"* ]]; then
 	    qdbus6 "$sb_service" "$display_path" SetBrightness 1500 1
 	elif [[ "$label" == *"$TV_SCREEN"* ]]; then
@@ -70,10 +85,6 @@ tv_mode () {
     set_audio_output $TV_AUDIO_OUTPUT
 }
 
-#
-# DESKTOP MODE
-# Activated when connected to desk monitor
-#
 
 desktop_mode () {
     # Adjust display resolution
@@ -91,52 +102,10 @@ desktop_mode () {
     set_audio_output $DESKTOP_AUDIO_OUTPUT
 }
 
-#
-# LAPTOP MODE
-# Activated when disconnected from living room TV and desk monitor
-#
 
 laptop_mode () {
     desktop_mode
 }
 
-#
-# Detection 
-#
 
-detected=0
-
-detect () {
-    outputs=$(kscreen-console outputs)
-
-    if [[ "$outputs" == *"$TV_SCREEN"* ]]; then
-        detected=$TV_MODE
-    elif [[ "$outputs" == *"$DESKTOP_SCREEN"* ]]; then
-	detected=$DESKTOP_MODE
-    else
-        detected=$LAPTOP_MODE
-    fi
-}
-
-detect
-last=$detected
-
-while true; do
-    detect
-
-    if [ "$detected" != "$last" ]; then
-        if [ "$detected" == "$TV_MODE" ]; then
-	    echo "----- TV MODE -----"
-	    tv_mode
-        elif [ "$detected" == "$DESKTOP_MODE" ]; then
-	    echo "----- DESKTOP MODE -----"
-            desktop_mode
-        else
-	    echo "----- LAPTOP MODE -----"
-	    laptop_mode
-        fi
-    fi
-
-    last=$detected
-    sleep $UPDATE_HZ
-done
+switch_mode "$1"

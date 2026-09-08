@@ -1,0 +1,61 @@
+#!/usr/bin/env python
+
+# Requires hwinfo
+
+import time, traceback, io, subprocess, os.path
+
+MODE_SWITCHER_SCRIPT = os.path.expanduser("~/scripts/mode_switcher")
+DEFAULT_MODE = 0
+MONITORS = {
+    "CSOT T3 LCD Monitor": 0,
+    "E241i-B1": 1,
+    "WET TV": 2,
+}
+MODE_NAMES = {
+    0: "Laptop",
+    1: "Desktop",
+    2: "Television",
+}
+
+
+def print_tagged(s):
+    print(f"[daemon] {s}")
+
+
+def main():
+    prev_mode = None
+    curr_mode = None
+
+    try:
+        while True:
+            try:
+                curr_mode = next_mode()
+                if curr_mode != prev_mode:
+                    prev_mode = curr_mode
+                    on_mode_change(curr_mode)
+
+                time.sleep(1)
+            except Exception:
+                print_tagged(traceback.format_exc())
+                time.sleep(5)
+    except KeyboardInterrupt:
+        print_tagged("Exiting due to KeyboardInterrupt")
+
+
+import subprocess
+
+
+def next_mode():
+    output = subprocess.check_output(["hwinfo", "--monitor", "--short"], text=True)
+    monitors = output.splitlines()[1:]
+    monitors = list(map(lambda m: m.lstrip(), monitors))
+    return MONITORS.get(monitors[-1], DEFAULT_MODE)
+
+
+def on_mode_change(mode):
+    print_tagged(f"Switching to mode: {MODE_NAMES[mode]}")
+    subprocess.run([MODE_SWITCHER_SCRIPT, str(mode)])
+
+
+if __name__ == "__main__":
+    main()
