@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+# Requires playerctl, mpv
+
+playerctl pause
+mpv --volume=115 ~/scripts/res/alert.ogg &

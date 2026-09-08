@@ -17,18 +17,26 @@ from gi.repository import Gtk4LayerShell as LayerShell
 
 import vlc
 
-import sys, time, os, urllib.request, json, subprocess, traceback, shlex, time
+import sys, time, os, json, subprocess, traceback, shlex, time, datetime
+from urllib import request, parse
 from enum import Enum
-from typing import Optional, Generic, TypeVar
+from typing import Optional, Generic, TypeVar, Callable, Any, List
+
+SCRIPT_NAME = "qbittorrent-autopreview"
+LOG_FILE = f"/tmp/{SCRIPT_NAME}.log"
+DEBUG_WEBUI_CALLS = True
 
 NAME = sys.argv[1]  # %N
 CONTENT_PATH = sys.argv[2]  # %F
-ID = sys.argv[3]  # %K
+FILE_COUNT = sys.argv[3]  # %C
+TORRENT_ID = sys.argv[4]  # %K
 
-api = f"http://localhost:8080/api/v2/torrents/properties?hash={ID}"
+API_ADDR = "127.0.0.1"
+API_PORT = "8080"
+API_ENDPOINT = f"http://{API_ADDR}:{API_PORT}/api/v2/torrents/"
 
-EXTRA_WAIT = 120
-INTERVAL = 1500
+COUNTDOWN_SECS = 30
+INTERVAL = 1000
 STREAMING_CONTAINER_FORMATS = [
     ".mkv",
     ".mk3d",
@@ -61,12 +69,15 @@ class Status(Enum):
 
 
 class Error(Enum):
-    NoVideoFiles = ("Waiting for video files...", Status.Waiting)
-    TooManyVideoFiles = ("Too many video files!", Status.Fatal)
+    NoVideosInTorrent = ("No streamable video files in torrent!", Status.Fatal)
+    TooManyVideosInTorrent = ("Too many video files!", Status.Fatal)
+    NoVideosInFilesystem = ("Waiting for video files...", Status.Waiting)
+    TooManyVideosInFilesystem = ("Too many video files!", Status.Fatal)
     NoVideoDuration = ("Waiting to determine video duration...", Status.Waiting)
-    WebUiUnreachable = ("Web UI unreachable!", Status.Fatal)
+    WebUiError = ("Web UI unreachable!", Status.Fatal)
     VideoUnplayable = ("Waiting for video to become playable...", Status.Waiting)
-    Buffering = ("Buffering...", Status.Waiting)
+    Buffering = ("Buffering for about %s...", Status.Waiting)
+    Countdown = ("Starting in %s...", Status.Waiting)
 
     def __init__(self, message, status):
         self.message = message
@@ -74,6 +85,7 @@ class Error(Enum):
 
 
 T = TypeVar("T")
+Y = TypeVar("Y")
 
 
 class Result(Generic[T]):
@@ -84,8 +96,13 @@ class Result(Generic[T]):
         self.value = value
         self.error = error
 
-    def is_ok(self):
-        return self.value and not self.error
+    def is_ok(self) -> bool:
+        return bool(self.value and not self.error)
+
+    def map(self, fn: Callable[[T], Y]) -> Result[Y]:
+        if self.value:
+            return Ok(fn(self.value))
+        return Err(self.error)
 
 
 def Ok(value):
@@ -105,23 +122,31 @@ class State:
     video_playable: bool = False
     autopreview_eta: Optional[int] = None
 
+    countdown_start: Optional[int] = None
+    countdown: bool = False
+
+    torrent_seq_dl: Optional[bool] = None
+    torrent_f_l_piece_prio: Optional[bool] = None
+
     def ready(self):
         self.error = None
         self.status = Status.Ready
 
 
 #
-# Main logic
+# Entry point
 #
 
 
 def on_activate(app):
+    # Main window
     window = Gtk.Window(application=app)
     window.set_default_size(100, 50)
 
     LayerShell.init_for_window(window)
     LayerShell.set_layer(window, LayerShell.Layer.TOP)
     LayerShell.set_anchor(window, LayerShell.Edge.TOP, True)
+    LayerShell.set_margin(window, LayerShell.Edge.BOTTOM, 12)
     LayerShell.auto_exclusive_zone_enable(window)
 
     title = f"Downloading torrent:\n{NAME}\n"
@@ -145,12 +170,21 @@ def on_activate(app):
             if state.status == Status.Fatal:
                 lines.append("\nFATAL!")
                 msg = "\n".join(lines)
-                os.system(f"notify-send -u critical 'qbittorrent-autopreview' '{msg}'")
+                notify(msg)
                 nuclear_suicide()
             else:
+
+                def add_countdown_to_last_line(countdown):
+                    line = lines.pop()
+                    line = line.replace("%s", pretty_time_delta(countdown))
+                    lines.append(line)
+
                 if state.error == Error.Buffering:
-                    autopreview_eta_pretty = pretty_time_delta(state.autopreview_eta)
-                    lines.append(f"Ready in about {autopreview_eta_pretty}")
+                    add_countdown_to_last_line(state.autopreview_eta + COUNTDOWN_SECS)
+                elif state.error == Error.Countdown:
+                    add_countdown_to_last_line(
+                        COUNTDOWN_SECS - (time.time() - state.countdown_start)
+                    )
         elif state.ready:
             lines.append("READY!")
             finish(state.video_path)
@@ -161,10 +195,36 @@ def on_activate(app):
 
 
 def update(state, set_state):
-    try:
-        # TODO need to check if all files exist and none are videos
+    def _ensure_torrent_has_one_video():
+        torrent_video_list = get_torrent_video_list()
+        if torrent_video_list.is_ok():
+            match len(torrent_video_list.value):
+                case 0:
+                    state.error = Error.NoVideosInTorrent
+                case n if n > 1:
+                    state.error = Error.TooManyVideosInTorrent
+        else:
+            state.error = torrent_video_list.error
 
-        # Get video path
+    def _ensure_torrent_seq_dl_and_f_l_piece_prio():
+        info = get_torrent_seq_dl_and_f_l_piece_prio()
+        if info.is_ok():
+            (seq_dl, f_l_piece_prio) = info.value
+            if not seq_dl:
+                result = toggle_torrent_seq_dl()
+                if not result.is_ok():
+                    state.error = result.error
+                    return
+            if not f_l_piece_prio:
+                result = toggle_torrent_f_l_piece_prio()
+                if not result.is_ok():
+                    state.error = result.error
+                    return
+
+        else:
+            state.error = info.error
+
+    def _get_video_path():
         if not state.video_path:
             video_path = get_video_path()
             if video_path.is_ok():
@@ -172,7 +232,7 @@ def update(state, set_state):
             else:
                 state.error = video_path.error
 
-        # Get video duration
+    def _get_video_duration():
         if state.video_path and not state.video_duration:
             video_duration = get_video_duration(state.video_path)
             if video_duration.is_ok():
@@ -180,14 +240,14 @@ def update(state, set_state):
             else:
                 state.error = video_duration.error
 
-        # Check that video is playable
+    def _check_video_is_playable():
         if state.video_duration and not state.video_playable:
             if is_valid_video_file(state.video_path):
                 state.video_playable = True
             else:
                 state.error = Error.VideoUnplayable
 
-        # Get torrent ETA
+    def _get_torrent_eta():
         if state.video_playable:
             torrent_eta = get_torrent_eta()
             if torrent_eta.is_ok():
@@ -195,25 +255,55 @@ def update(state, set_state):
             else:
                 state.error = torrent_eta.error
 
-        # Calculate autopreview ETA
+    def _calculate_autopreview_eta():
         if state.torrent_eta:
-            state.autopreview_eta = (
-                state.torrent_eta - state.video_duration + EXTRA_WAIT
-            )
+            state.autopreview_eta = state.torrent_eta - state.video_duration
 
-            if state.autopreview_eta <= 0:
-                state.ready()
+            should_countdown = state.autopreview_eta <= 0
+
+            if should_countdown != state.countdown:
+                state.countdown = should_countdown
+                state.countdown_start = time.time()
+
+            if should_countdown:
+                countdown_finished = (
+                    time.time() - state.countdown_start > COUNTDOWN_SECS
+                )
+                if countdown_finished:
+                    state.ready()
+                else:
+                    state.error = Error.Countdown
             else:
-                state.error = Error.VideoUnplayable
+                state.error = Error.Buffering
 
+    # Run steps in sequence
+    try:
+        steps = [
+            _ensure_torrent_has_one_video,
+            _ensure_torrent_seq_dl_and_f_l_piece_prio,
+            _get_video_path,
+            _get_video_duration,
+            _check_video_is_playable,
+            _get_torrent_eta,
+            _calculate_autopreview_eta,
+        ]
+        state.error = None
+        for step in steps:
+            step()
+            if state.error:
+                if state.error.status == Status.Fatal:
+                    notify(f"FATAL ERROR:\n\n{state.error.message}")
+                break
         set_state(state)
     except:
-        e = shlex.quote(traceback.format_exc())
-        os.system(f"notify-send Error {e}")
+        e = traceback.format_exc()
+        notify(f"EXCEPTION:\n\n{e}")
+        nuclear_suicide()
     return True
 
 
 def finish(path):
+    os.system("~/scripts/tv_alert")
     subprocess.Popen(
         ["vlc", path],
         stdin=None,
@@ -228,13 +318,79 @@ def finish(path):
 #
 
 
-def get_torrent_eta() -> Result[int]:
+def notify(text):
+    with open(LOG_FILE, "a") as file:
+        file.write(text)
+
+    body = shlex.quote(f'<b><a href="file://{LOG_FILE}">View log</a></b>\n\n{text}')
+    os.system(f"notify-send -u critical '{SCRIPT_NAME}' {body}")
+
+
+def api(fn, params, method="GET") -> Result[Any]:
+    parts = [API_ENDPOINT, fn]
+    if method == "GET":
+        parts.append("?")
+        for k, v in params.items():
+            parts.append(f"{k}={v}")
+    url = "".join(parts)
+
     try:
-        response = urllib.request.urlopen(api)
-        eta = json.loads(response.read())["eta"]
-        return Ok(eta)
-    except:
-        return Err(Error.WebUiUnreachable)
+
+        def send_req():
+            if method == "GET":
+                return request.urlopen(url)
+            elif method == "POST":
+                body = parse.urlencode(params).encode()
+                req = request.Request(url, data=body, method=method)
+                return request.urlopen(req)
+
+        with send_req() as res:
+            text = res.read().decode()
+            if not text and res.status == 200:
+                return Ok(None)
+            data = json.loads(text)
+            return Ok(data)
+    except Exception as e:
+        if DEBUG_WEBUI_CALLS:
+            raise Exception(f"Request failed ({url})") from e
+        return Err(Error.WebUiError)
+
+
+def get_torrent_eta() -> Result[int]:
+    return api("properties", {"hash": TORRENT_ID}).map(lambda data: data["eta"])
+
+
+def get_torrent_seq_dl_and_f_l_piece_prio() -> Result[tuple[bool, bool]]:
+    return api("info", {"hashes": TORRENT_ID}).map(
+        lambda data: (data[0]["seq_dl"], data[0]["f_l_piece_prio"])
+    )
+
+
+def toggle_torrent_seq_dl() -> Result[None]:
+    return api("toggleSequentialDownload", {"hashes": TORRENT_ID}, "POST").map(
+        lambda _: None
+    )
+
+
+def toggle_torrent_f_l_piece_prio() -> Result[None]:
+    return api("toggleFirstLastPiecePrio", {"hashes": TORRENT_ID}, "POST").map(
+        lambda _: None
+    )
+
+
+def get_torrent_video_list() -> Result[List[str]]:
+    return api("files", {"hash": TORRENT_ID}).map(
+        lambda files: list(
+            map(
+                lambda file: str(file["name"]),
+                filter(
+                    lambda file: file["priority"] != 0
+                    and is_streamable_video_file(file["name"], True),
+                    files,
+                ),
+            )
+        )
+    )
 
 
 def get_video_duration(path) -> Result[int]:
@@ -261,12 +417,16 @@ def get_video_duration(path) -> Result[int]:
         return Err(Error.NoVideoDuration)
 
 
-def is_streamable_video_file(path):
+def is_streamable_video_file(path, allow_nonexistent=False):
     if os.path.isdir(path):
         return False
-    _, ext = os.path.splitext(path)
-    ext = ext.lower()
-    return ext in STREAMING_CONTAINER_FORMATS
+    if len(path) < 5:
+        return False
+    path_end = path[5:]
+    for ext in STREAMING_CONTAINER_FORMATS:
+        if path_end.endswith(ext):
+            return True
+    return False
 
 
 def find_all_video_paths():
@@ -291,11 +451,11 @@ def get_video_path() -> Result[str]:
     all_video_paths = find_all_video_paths()
     match len(all_video_paths):
         case 0:
-            return Err(Error.NoVideoFiles)
+            return Err(Error.NoVideosInFilesystem)
         case 1:
             return Ok(all_video_paths[0])
         case _:
-            return Err(Error.TooManyVideoFiles)
+            return Err(Error.TooManyVideosInFilesystem)
 
 
 def is_valid_video_file(path):
@@ -333,6 +493,15 @@ def pretty_time_delta(seconds):
 # Entry point
 #
 
-app = Gtk.Application(application_id="com.github.fr33zing.qbittorrent_autopreview")
-app.connect("activate", on_activate)
-app.run(None)
+
+def main():
+    if os.path.exists(LOG_FILE):
+        os.remove(LOG_FILE)
+
+    app = Gtk.Application(application_id="com.github.fr33zing.qbittorrent_autopreview")
+    app.connect("activate", on_activate)
+    app.run(None)
+
+
+if __name__ == "__main__":
+    main()
