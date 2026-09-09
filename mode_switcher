@@ -11,23 +11,25 @@ DESKTOP_AUDIO_OUTPUT="$HEADPHONES_MAC"
 #
 
 switch_mode () {
+    killall bluetoothctl # Prevents hanging
+    
     echo "----- Switching mode: ${1} -----"
     case $1 in
 	0)
 	    notify_mode_switch "Laptop"
-	    laptop_mode
+	    laptop_mode &
 	    ;;
 	1)
 	    notify_mode_switch "Desktop"
-	    desktop_mode
+	    desktop_mode &
 	    ;;
 	2)
 	    notify_mode_switch "Television"
-	    tv_mode
+	    tv_mode &
 	    ;;
 	*)
 	    echo "!!! UNDEFINED MODE !!!"
-	    laptop_mode
+	    laptop_mode &
 	    ;;
     esac
 }
