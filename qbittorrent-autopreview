@@ -27,9 +27,8 @@ LOG_FILE = f"/tmp/{SCRIPT_NAME}.log"
 DEBUG_WEBUI_CALLS = True
 
 NAME = sys.argv[1]  # %N
-CONTENT_PATH = sys.argv[2]  # %F
-FILE_COUNT = sys.argv[3]  # %C
-TORRENT_ID = sys.argv[4]  # %K
+SAVE_PATH = sys.argv[2]  # %D
+TORRENT_ID = sys.argv[3]  # %K
 
 API_ADDR = "127.0.0.1"
 API_PORT = "8080"
@@ -201,7 +200,10 @@ def update(state, set_state):
             match len(torrent_video_list.value):
                 case 0:
                     state.error = Error.NoVideosInTorrent
-                case n if n > 1:
+                case 1:
+                    relative_path = torrent_video_list.value[0]
+                    state.video_path = os.path.join(SAVE_PATH, relative_path)
+                case _:
                     state.error = Error.TooManyVideosInTorrent
         else:
             state.error = torrent_video_list.error
@@ -223,14 +225,6 @@ def update(state, set_state):
 
         else:
             state.error = info.error
-
-    def _get_video_path():
-        if not state.video_path:
-            video_path = get_video_path()
-            if video_path.is_ok():
-                state.video_path = video_path.value
-            else:
-                state.error = video_path.error
 
     def _get_video_duration():
         if state.video_path and not state.video_duration:
@@ -281,7 +275,6 @@ def update(state, set_state):
         steps = [
             _ensure_torrent_has_one_video,
             _ensure_torrent_seq_dl_and_f_l_piece_prio,
-            _get_video_path,
             _get_video_duration,
             _check_video_is_playable,
             _get_torrent_eta,
@@ -440,10 +433,10 @@ def find_all_video_paths():
             elif is_streamable_video_file(full_path):
                 video_paths.append(full_path)
 
-    if is_streamable_video_file(CONTENT_PATH):
-        return [CONTENT_PATH]
-    elif os.path.isdir(CONTENT_PATH):
-        check_files_recursive(CONTENT_PATH)
+    if is_streamable_video_file(SAVE_PATH):
+        return [SAVE_PATH]
+    elif os.path.isdir(SAVE_PATH):
+        check_files_recursive(SAVE_PATH)
     return video_paths
 
 
