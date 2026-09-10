@@ -7,9 +7,9 @@
 #     - Enable "Run on torrent added", add the script with arguments
 #       Example: /home/username/scripts/qbittorrent-autopreview "%N" "%D" "%K"
 # - Preferences > WebUI
-#   - Enable Web User Interface (Remote control)
-#   - Enable Bypass authentication for clients on localhost
-#   - Ensure WebUI port and API_PORT (below) match
+#   - Enable "Web User Interface (Remote control)"
+#   - Enable "Bypass authentication for clients on localhost"
+#   - Ensure "WebUI port" and `API_PORT` (below) match
 
 from ctypes import CDLL
 
