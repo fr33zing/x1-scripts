@@ -26,7 +26,7 @@ SCRIPT_NAME = "qbittorrent-autopreview"
 LOG_FILE = f"/tmp/{SCRIPT_NAME}.log"
 DEBUG_WEBUI_CALLS = True
 
-NAME = sys.argv[1]  # %N
+NAME = " ".join(sys.argv[1].split())  # %N
 SAVE_PATH = sys.argv[2]  # %D
 TORRENT_ID = sys.argv[3]  # %K
 
