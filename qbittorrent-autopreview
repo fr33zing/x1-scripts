@@ -344,14 +344,7 @@ def update(state, set_state):
 
 
 def finish(path):
-    os.system("~/scripts/tv_alert &")
-    os.system("~/scripts/alert 250 'MOVIE TIME\nSIT DOWN' &")
-    subprocess.Popen(
-        ["vlc", path],
-        stdin=None,
-        stdout=None,
-        stderr=None,
-    )
+    os.system(f"~/scripts/start_movie {shlex.quote(path)} &")
     nuclear_suicide()
 
 

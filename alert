@@ -9,28 +9,67 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
 
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, Gdk, GLib, Pango
 from gi.repository import Gtk4LayerShell as LayerShell
 
-import sys
+import argparse, sys
 
 INTERVAL = 50
 FLASH_INTERVAL = 600
-OPACITY = 0.85
 
 prev_pointer_position = None
 inverted = None
 
+parser = argparse.ArgumentParser(
+    prog="alert",
+    description="displays a fullscreen alert on every monitor",
+    epilog="CSS reference: https://www.w3.org/TR/css-fonts/ --- Pango reference: https://docs.gtk.org/Pango/pango_markup.html",
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+)
+parser.suggest_on_error = True
+parser.add_argument(
+    "text",
+    type=str,
+    nargs="?",
+    help="text to display - unformatted or Pango markup if --pango is provided",
+)
+parser.add_argument(
+    "-o",
+    "--opacity",
+    type=float,
+    default="0.75",
+    help="window opacity - float",
+)
+parser.add_argument(
+    "-s",
+    "--font-size",
+    type=str,
+    default="128px",
+    help="font size - css",
+)
+parser.add_argument(
+    "-f",
+    "--font-family",
+    type=str,
+    default="sans-serif",
+    help="font family - css",
+)
+parser.add_argument(
+    "-i",
+    "--flash-interval",
+    type=int,
+    default=750,
+    help="flash interval - milliseconds",
+)
 
-def arg_or_default(pos, t, default):
-    try:
-        return t(sys.argv[pos])
-    except:
-        return default
-
-
-FONT_SIZE = arg_or_default(1, int, 64)
-TEXT = arg_or_default(2, str, "ALERT")
+parser.add_argument(
+    "-p",
+    "--pango",
+    default=False,
+    action=argparse.BooleanOptionalAction,
+    help="enable Pango markup",
+)
+args = parser.parse_args()
 
 
 def on_activate(app):
@@ -49,9 +88,7 @@ def on_activate(app):
 
 
 def make_window(app, display, monitor):
-    css = Gtk.CssProvider()
-    css.load_from_string(
-        """
+    css_str = """
         window {
           background: black;
         }
@@ -59,16 +96,19 @@ def make_window(app, display, monitor):
           background: white;
         }
         label {
-          font-size: %px;
+          font-family: %s;
+          font-size: %s;
           color: white;
         }
         window.inverted label {
           color: black;
         }
-        """.replace(
-            "%", str(FONT_SIZE)
-        )
+    """ % (
+        args.font_family,
+        args.font_size,
     )
+    css = Gtk.CssProvider()
+    css.load_from_string(css_str)
     Gtk.StyleContext.add_provider_for_display(
         display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     )
@@ -77,7 +117,7 @@ def make_window(app, display, monitor):
     window = Gtk.Window(application=app)
     window.set_default_size(geometry.width, geometry.height)
     window.set_resizable(False)
-    window.set_opacity(OPACITY)
+    window.set_opacity(args.opacity)
     window.set_title("alert")
     window.set_overflow(Gtk.Overflow.HIDDEN)
 
@@ -92,11 +132,16 @@ def make_window(app, display, monitor):
     LayerShell.set_anchor(window, LayerShell.Edge.LEFT, True)
     LayerShell.set_anchor(window, LayerShell.Edge.RIGHT, True)
 
-    label = Gtk.Label(label=TEXT)
-    label.set_wrap(True)
-    label.set_justify(Gtk.Justification.CENTER)
+    if args.text:
+        label = Gtk.Label()
+        label.set_wrap(True)
+        label.set_justify(Gtk.Justification.CENTER)
+        if args.pango:
+            label.set_markup(args.text)
+        else:
+            label.set_label(args.text)
+        window.set_child(label)
 
-    window.set_child(label)
     window.present()
 
 
@@ -126,13 +171,8 @@ def update(app, pointer):
             return False
 
     return True
-    # if surface:
-    #     position = surface.get_device_position()
-    #     print(position)
 
 
 app = Gtk.Application(application_id="com.github.fr33zing.alert")
 app.connect("activate", on_activate)
 app.run(None)
-
-# TODO quit

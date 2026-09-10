@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+playerctl pause
+mpv --volume=115 ~/scripts/res/alert.ogg &
+
+~/scripts/alert --opacity 1 --font-family 'URW Gothic' --pango \
+'<span size="200%" weight="bold">MOVIE TIME</span>
+<i>Please take your seats.</i>'
+
+vlc --no-start-paused "$1"
