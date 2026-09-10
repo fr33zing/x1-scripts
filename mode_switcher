@@ -6,8 +6,11 @@ LAPTOP_SCREEN="Built-in Screen"
 NATIVE_RES="1920x1200"
 TV_RES="1920x1080"
 HEADPHONES_MAC="38:18:4C:12:2B:22"
-TV_AUDIO_OUTPUT="HDMI-1"
+
+TV_AUDIO_OUTPUT="HDMI1"
+TV_AUDIO_VOLUME="100%"
 DESKTOP_AUDIO_OUTPUT="$HEADPHONES_MAC"
+DESKTOP_AUDIO_VOLUME="50%"
 
 #
 # Main
@@ -57,6 +60,7 @@ set_audio_output () {
 	if [[ "$sink" == *"$desired"* ]]; then
 	    wpctl set-mute "$sink_id" 0
 	    wpctl set-default "$sink_id"
+	    wpctl set-volume "$sink_id" "$2"
 	else
 	    wpctl set-mute "$sink_id" 1
 	fi
@@ -86,8 +90,8 @@ tv_mode () {
     done
 
     # Disconnect bluetooth headphones
-    bluetoothctl block $HEADPHONES_MAC
-    set_audio_output $TV_AUDIO_OUTPUT
+    bluetoothctl power off
+    set_audio_output $TV_AUDIO_OUTPUT $TV_AUDIO_VOLUME
 }
 
 
@@ -101,10 +105,9 @@ desktop_mode () {
 	  setBrightnessSilent 10000
 
     # Connect bluetooth headphones
-    bluetoothctl unblock $HEADPHONES_MAC
+    bluetoothctl power on
     bluetoothctl connect $HEADPHONES_MAC
-    sleep 5
-    set_audio_output $DESKTOP_AUDIO_OUTPUT
+    set_audio_output $DESKTOP_AUDIO_OUTPUT $DESKTOP_AUDIO_VOLUME
 }
 
 
