@@ -1,0 +1,138 @@
+#!/usr/bin/env python
+
+from ctypes import CDLL
+
+CDLL("libgtk4-layer-shell.so")
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gtk4LayerShell", "1.0")
+
+from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk4LayerShell as LayerShell
+
+import sys
+
+INTERVAL = 50
+FLASH_INTERVAL = 600
+OPACITY = 0.85
+
+prev_pointer_position = None
+inverted = None
+
+
+def arg_or_default(pos, t, default):
+    try:
+        return t(sys.argv[pos])
+    except:
+        return default
+
+
+FONT_SIZE = arg_or_default(1, int, 64)
+TEXT = arg_or_default(2, str, "ALERT")
+
+
+def on_activate(app):
+    displays = Gdk.DisplayManager.get().list_displays()
+    for display in displays:
+        monitors = display.get_monitors()
+        n_monitors = monitors.get_n_items()
+        seat = display.get_default_seat()
+        pointer = seat.get_pointer()  # todo check seat != null
+        for i in range(0, n_monitors):
+            monitor = monitors.get_item(i)
+            make_window(app, display, monitor)
+
+    GLib.timeout_add(INTERVAL, update, app, pointer)
+    GLib.timeout_add(FLASH_INTERVAL, flash, app)
+
+
+def make_window(app, display, monitor):
+    css = Gtk.CssProvider()
+    css.load_from_string(
+        """
+        window {
+          background: black;
+        }
+        window.inverted {
+          background: white;
+        }
+        label {
+          font-size: %px;
+          color: white;
+        }
+        window.inverted label {
+          color: black;
+        }
+        """.replace(
+            "%", str(FONT_SIZE)
+        )
+    )
+    Gtk.StyleContext.add_provider_for_display(
+        display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+
+    geometry = monitor.get_geometry()
+    window = Gtk.Window(application=app)
+    window.set_default_size(geometry.width, geometry.height)
+    window.set_resizable(False)
+    window.set_opacity(OPACITY)
+    window.set_title("alert")
+    window.set_overflow(Gtk.Overflow.HIDDEN)
+
+    LayerShell.init_for_window(window)
+    LayerShell.set_monitor(window, monitor)
+    LayerShell.set_respect_close(window, True)
+    LayerShell.set_keyboard_mode(
+        window, LayerShell.KeyboardMode.NONE
+    )  # todo capture all kb input to close
+    LayerShell.set_layer(window, LayerShell.Layer.OVERLAY)
+    LayerShell.set_anchor(window, LayerShell.Edge.TOP, True)
+    LayerShell.set_anchor(window, LayerShell.Edge.LEFT, True)
+    LayerShell.set_anchor(window, LayerShell.Edge.RIGHT, True)
+
+    label = Gtk.Label(label=TEXT)
+    label.set_wrap(True)
+    label.set_justify(Gtk.Justification.CENTER)
+
+    window.set_child(label)
+    window.present()
+
+
+def flash(app):
+    global inverted
+    inverted = not inverted
+    for window in app.get_windows():
+        if inverted:
+            window.add_css_class("inverted")
+        else:
+            window.remove_css_class("inverted")
+    return True
+
+
+def update(app, pointer):
+    global prev_pointer_position
+
+    (_, x, y) = pointer.get_surface_at_position()
+    curr_pointer_position = (x, y)
+
+    if curr_pointer_position != prev_pointer_position:
+        if prev_pointer_position == None:
+            prev_pointer_position = curr_pointer_position
+            return True
+        else:
+            app.quit()
+            return False
+
+    return True
+    # if surface:
+    #     position = surface.get_device_position()
+    #     print(position)
+
+
+app = Gtk.Application(application_id="com.github.fr33zing.alert")
+app.connect("activate", on_activate)
+app.run(None)
+
+# TODO quit

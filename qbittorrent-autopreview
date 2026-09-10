@@ -344,7 +344,8 @@ def update(state, set_state):
 
 
 def finish(path):
-    os.system("~/scripts/tv_alert")
+    os.system("~/scripts/tv_alert &")
+    os.system("~/scripts/alert 250 'MOVIE TIME\nSIT DOWN' &")
     subprocess.Popen(
         ["vlc", path],
         stdin=None,
@@ -487,17 +488,6 @@ def find_all_video_paths():
     elif os.path.isdir(SAVE_PATH):
         check_files_recursive(SAVE_PATH)
     return video_paths
-
-
-def get_video_path() -> Result[str]:
-    all_video_paths = find_all_video_paths()
-    match len(all_video_paths):
-        case 0:
-            return Err(Error.NoVideosInFilesystem)
-        case 1:
-            return Ok(all_video_paths[0])
-        case _:
-            return Err(Error.TooManyVideosInFilesystem)
 
 
 def is_valid_video_file(path):
