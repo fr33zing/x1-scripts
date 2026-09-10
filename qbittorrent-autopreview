@@ -1,7 +1,15 @@
 #!/usr/bin/env python
 
-# Requires gtk4-layer-shell
-# Requires python-vlc (python-python-vlc)
+# Requires gtk4-layer-shell, python-vlc
+#
+# Instructions for qBittorrent setup:
+# - Preferences > Downloads
+#     - Enable "Run on torrent added", add the script with arguments
+#       Example: /home/username/scripts/qbittorrent-autopreview "%N" "%D" "%K"
+# - Preferences > WebUI
+#   - Enable Web User Interface (Remote control)
+#   - Enable Bypass authentication for clients on localhost
+#   - Ensure WebUI port and API_PORT (below) match
 
 from ctypes import CDLL
 
