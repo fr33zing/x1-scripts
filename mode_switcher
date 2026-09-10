@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+TV_SCREEN="WET"
+LAPTOP_SCREEN="Built-in Screen"
+
 NATIVE_RES="1920x1200"
 TV_RES="1920x1080"
 HEADPHONES_MAC="38:18:4C:12:2B:22"
