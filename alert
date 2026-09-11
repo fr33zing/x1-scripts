@@ -15,7 +15,6 @@ from gi.repository import Gtk4LayerShell as LayerShell
 import argparse, sys
 
 INTERVAL = 50
-FLASH_INTERVAL = 600
 
 prev_pointer_position = None
 inverted = None
@@ -61,7 +60,13 @@ parser.add_argument(
     default=750,
     help="flash interval - milliseconds",
 )
-
+parser.add_argument(
+    "-x",
+    "--flash",
+    default=True,
+    action=argparse.BooleanOptionalAction,
+    help="enable flashing",
+)
 parser.add_argument(
     "-p",
     "--pango",
@@ -70,6 +75,8 @@ parser.add_argument(
     help="enable Pango markup",
 )
 args = parser.parse_args()
+
+print(args)
 
 
 def on_activate(app):
@@ -84,7 +91,8 @@ def on_activate(app):
             make_window(app, display, monitor)
 
     GLib.timeout_add(INTERVAL, update, app, pointer)
-    GLib.timeout_add(FLASH_INTERVAL, flash, app)
+    if args.flash:
+        GLib.timeout_add(args.flash_interval, flash, app)
 
 
 def make_window(app, display, monitor):

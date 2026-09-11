@@ -4,7 +4,8 @@
 
 import time, traceback, io, subprocess, os.path
 
-MODE_SWITCHER_SCRIPT = os.path.expanduser("~/scripts/mode_switcher")
+MODE_SWITCHER_SCRIPT_BASENAME = "mode_switcher"
+MODE_SWITCHER_SCRIPT = os.path.expanduser(f"~/scripts/{MODE_SWITCHER_SCRIPT_BASENAME}")
 DEFAULT_MODE = 0
 MONITORS = {
     "CSOT T3 LCD Monitor": 0,
@@ -16,6 +17,8 @@ MODE_NAMES = {
     1: "Desktop",
     2: "Television",
 }
+
+script_process = None
 
 
 def print_tagged(s):
@@ -53,8 +56,20 @@ def next_mode():
 
 
 def on_mode_change(mode):
+    global script_process
     print_tagged(f"Switching to mode: {MODE_NAMES[mode]}")
-    subprocess.run([MODE_SWITCHER_SCRIPT, str(mode)])
+    kill_other_script_process()
+    script_process = subprocess.Popen([MODE_SWITCHER_SCRIPT, str(mode)])
+
+
+def kill_other_script_process():
+    global script_process
+    if script_process:
+        print_tagged(
+            f"Killing other {MODE_SWITCHER_SCRIPT_BASENAME} script process: {script_process.pid}"
+        )
+        script_process.kill()
+        script_process = None
 
 
 if __name__ == "__main__":

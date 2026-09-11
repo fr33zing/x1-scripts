@@ -23,19 +23,19 @@ switch_mode () {
     case $1 in
 	0)
 	    notify_mode_switch "Laptop"
-	    laptop_mode &
+	    laptop_mode
 	    ;;
 	1)
 	    notify_mode_switch "Desktop"
-	    desktop_mode &
+	    desktop_mode
 	    ;;
 	2)
 	    notify_mode_switch "Television"
-	    tv_mode &
+	    tv_mode
 	    ;;
 	*)
 	    echo "!!! UNDEFINED MODE !!!"
-	    laptop_mode &
+	    laptop_mode
 	    ;;
     esac
 }
@@ -45,7 +45,7 @@ switch_mode () {
 #
 
 notify_mode_switch () {
-    notify-send "Mode switcher" "Switching to <b>${1}</b> mode..."
+    ~/scripts/alert --no-flash "${1} mode" &
 }
 
 set_builtin_screen_res () {
@@ -65,6 +65,13 @@ set_audio_output () {
 	    wpctl set-mute "$sink_id" 1
 	fi
     done
+}
+
+set_dnd () {
+    inhibited="$(qdbus6 org.freedesktop.Notifications /org/freedesktop/Notifications Inhibited)"
+    if [[ "$1" != "$inhibited" ]]; then
+	qdbus6 org.kde.kglobalaccel /component/plasmashell invokeShortcut "toggle do not disturb"
+    fi
 }
 
 #
@@ -89,9 +96,15 @@ tv_mode () {
 	fi
     done
 
+    # Adjust DnD mode
+    set_dnd true
+
     # Disconnect bluetooth headphones
     bluetoothctl power off
     set_audio_output $TV_AUDIO_OUTPUT $TV_AUDIO_VOLUME
+
+    # Inhibit sleep
+    ~/scripts/mode_switcher_inhibitor "$$"
 }
 
 
@@ -104,9 +117,13 @@ desktop_mode () {
           /org/kde/Solid/PowerManagement/Actions/BrightnessControl \
 	  setBrightnessSilent 10000
 
+    # Adjust DnD mode
+    set_dnd false
+
     # Connect bluetooth headphones
     bluetoothctl power on
     bluetoothctl connect $HEADPHONES_MAC
+    sleep 5
     set_audio_output $DESKTOP_AUDIO_OUTPUT $DESKTOP_AUDIO_VOLUME
 }
 

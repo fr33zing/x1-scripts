@@ -1,0 +1,25 @@
+#!/usr/bin/env python
+
+import time, sys, dbus, os
+
+session_bus = dbus.SessionBus()
+proxy = session_bus.get_object(
+    "org.freedesktop.PowerManagement.Inhibit",
+    "/org/freedesktop/PowerManagement/Inhibit",
+)
+cookie = proxy.Inhibit("mode_switcher", "Television mode")
+
+
+def parent_alive():
+    try:
+        os.kill(int(sys.argv[1]), 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+while parent_alive():
+    try:
+        time.sleep(1)
+    except KeyboardInterrupt:
+        break
