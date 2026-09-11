@@ -57,7 +57,7 @@ parser.add_argument(
     "-i",
     "--flash-interval",
     type=int,
-    default=750,
+    default=1000,
     help="flash interval - milliseconds",
 )
 parser.add_argument(
@@ -74,9 +74,18 @@ parser.add_argument(
     action=argparse.BooleanOptionalAction,
     help="enable Pango markup",
 )
+parser.add_argument(
+    "-c",
+    "--countdown",
+    type=int,
+    default=None,
+    help="countdown, seconds - use %%c in text",
+)
+
 args = parser.parse_args()
 
-print(args)
+countdown_secs = args.countdown
+labels = []
 
 
 def on_activate(app):
@@ -93,9 +102,13 @@ def on_activate(app):
     GLib.timeout_add(INTERVAL, update, app, pointer)
     if args.flash:
         GLib.timeout_add(args.flash_interval, flash, app)
+    if args.countdown:
+        GLib.timeout_add(1000, update_countdown)
 
 
 def make_window(app, display, monitor):
+    global labels
+
     css_str = """
         window {
           background: black;
@@ -140,17 +153,59 @@ def make_window(app, display, monitor):
     LayerShell.set_anchor(window, LayerShell.Edge.LEFT, True)
     LayerShell.set_anchor(window, LayerShell.Edge.RIGHT, True)
 
+    label = Gtk.Label()
+    update_label_text(label)
+    labels.append(label)
+    window.set_child(label)
+    window.present()
+
+
+def update_label_text(label):
     if args.text:
-        label = Gtk.Label()
+        text = format_text(args)
         label.set_wrap(True)
         label.set_justify(Gtk.Justification.CENTER)
         if args.pango:
-            label.set_markup(args.text)
+            label.set_markup(text)
         else:
-            label.set_label(args.text)
-        window.set_child(label)
+            label.set_label(text)
 
-    window.present()
+
+def update_countdown():
+    global countdown_secs
+    global labels
+
+    countdown_secs -= 1
+    if countdown_secs == 0:
+        sys.exit(0)
+    for label in labels:
+        update_label_text(label)
+
+    return True
+
+
+def format_text(args):
+    global countdown_secs
+
+    if args.countdown:
+        return args.text.replace("%c", pretty_time_delta(countdown_secs))
+    return args.text
+
+
+def pretty_time_delta(seconds):
+    sign_string = "-" if seconds < 0 else ""
+    seconds = abs(int(seconds))
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    if days > 0:
+        return "%s%dd %dh %dm %ds" % (sign_string, days, hours, minutes, seconds)
+    elif hours > 0:
+        return "%s%dh %dm %ds" % (sign_string, hours, minutes, seconds)
+    elif minutes > 0:
+        return "%s%dm %ds" % (sign_string, minutes, seconds)
+    else:
+        return "%s%ds" % (sign_string, seconds)
 
 
 def flash(app):
@@ -167,7 +222,7 @@ def flash(app):
 def update(app, pointer):
     global prev_pointer_position
 
-    (_, x, y) = pointer.get_surface_at_position()
+    _, x, y = pointer.get_surface_at_position()
     curr_pointer_position = (x, y)
 
     if curr_pointer_position != prev_pointer_position:

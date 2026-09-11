@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+INTERMISSION_SECS=600
+WARNING_SECS=6
+
+playerctl pause
+
+~/scripts/alert \
+  --countdown $INTERMISSION_SECS \
+  --opacity '0.5' \
+  --no-flash \
+  --font-family 'URW Gothic' \
+  --font-size 256px \
+  --pango \
+  '<b>INTERMISSION</b>
+<i><span font-size="25%">Movie resumes in %c</span></i>'
+
+mpv --volume=115 ~/scripts/res/alert.ogg &
+
+~/scripts/alert \
+  --countdown $WARNING_SECS \
+  --flash-interval 200 \
+  --font-family 'URW Gothic' \
+  --font-size 256px \
+  --pango \
+  '<b>INTERMISSION ENDING NOW</b>'
+
+playerctl play
