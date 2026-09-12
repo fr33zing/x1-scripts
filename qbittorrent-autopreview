@@ -103,10 +103,10 @@ class Result(Generic[T]):
         self.error = error
 
     def is_ok(self) -> bool:
-        return bool(self.value and not self.error)
+        return bool(self.value != None and not self.error)
 
     def map(self, fn: Callable[[T], Y]) -> Result[Y]:
-        if self.value:
+        if self.is_ok():
             return Ok(fn(self.value))
         return Err(self.error)
 
@@ -149,9 +149,10 @@ def on_activate(app):
     window.set_default_size(100, 50)
 
     css = Gtk.CssProvider()
-    css.load_from_string(
-        """
+    css.load_from_string("""
         .title { font-weight: bold; }
+        .title.failure { color: #ed8796	; }
+        .title.success { color: #a6da95; }
         button {
           padding: 4px;
           border-radius: 50%;
@@ -159,8 +160,7 @@ def on_activate(app):
           background-color: #ed8796;
           color: #181926;
         }
-        """
-    )
+        """)
     Gtk.StyleContext.add_provider_for_display(
         Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
     )
@@ -212,10 +212,8 @@ def on_activate(app):
             lines.append(state.error.message)
 
             if state.status == Status.Fatal:
-                lines.append("\nFATAL!")
-                msg = "\n".join(lines)
-                notify(msg)
-                nuclear_suicide()
+                title_label.set_label("Download failed!")
+                title_label.add_css_class("failure")
             else:
 
                 def add_countdown_to_last_line(countdown):
@@ -226,6 +224,8 @@ def on_activate(app):
                 if state.error == Error.Buffering:
                     add_countdown_to_last_line(state.autopreview_eta + COUNTDOWN_SECS)
                 elif state.error == Error.Countdown:
+                    title_label.set_label("Download ready!")
+                    title_label.add_css_class("success")
                     add_countdown_to_last_line(
                         COUNTDOWN_SECS - (time.time() - state.countdown_start)
                     )
@@ -240,6 +240,8 @@ def on_activate(app):
 
 def update(state, set_state):
     def _ensure_torrent_has_one_video():
+        import pprint
+
         if not state.video_path:
             torrent_video_list = get_torrent_video_list()
             if torrent_video_list.is_ok():
@@ -251,6 +253,7 @@ def update(state, set_state):
                         state.video_path = os.path.join(SAVE_PATH, relative_path)
                     case _:
                         state.error = Error.TooManyVideos
+                return
             else:
                 state.error = torrent_video_list.error
         if not state.video_path:
@@ -259,7 +262,7 @@ def update(state, set_state):
     def _ensure_torrent_seq_dl_and_f_l_piece_prio():
         info = get_torrent_seq_dl_and_f_l_piece_prio()
         if info.is_ok():
-            (seq_dl, f_l_piece_prio) = info.value
+            seq_dl, f_l_piece_prio = info.value
             if not seq_dl:
                 result = toggle_torrent_seq_dl()
                 if not result.is_ok():
@@ -332,15 +335,14 @@ def update(state, set_state):
             step()
             GLib.Thread.yield_()
             if state.error:
-                if state.error.status == Status.Fatal:
-                    notify(f"FATAL ERROR:\n\n{state.error.message}")
+                state.status = state.error.status
                 break
         set_state(state)
     except:
         e = traceback.format_exc()
         notify(f"EXCEPTION:\n\n{e}")
         nuclear_suicide()
-    return True
+    return state.status != Status.Fatal
 
 
 def finish(path):
@@ -417,10 +419,10 @@ def get_torrent_video_list() -> Result[List[str]]:
     return api("files", {"hash": TORRENT_ID}).map(
         lambda files: list(
             map(
-                lambda file: str(file["name"]),
+                lambda file: file["name"],
                 filter(
                     lambda file: file["priority"] != 0
-                    and is_streamable_video_file(file["name"], True),
+                    and is_streamable_video_file(file["name"]),
                     files,
                 ),
             )
@@ -453,7 +455,7 @@ def get_video_duration(path) -> Result[int]:
         return Err(Error.NoVideoDuration)
 
 
-def is_streamable_video_file(path, allow_nonexistent=False):
+def is_streamable_video_file(path):
     if os.path.isdir(path):
         return False
     if len(path) < 5:
