@@ -32,12 +32,17 @@ that allow for streaming.
 
 Pause everything, make a loud noise, and open VLC with the provided file.
 
+**Uses:** `alert` to indicate that the movie is ready
+
 **Requires:** `mpv`, `playerctl`
 
 ## [intermission](./intermission)
 
 Pause everything, and display a countdown.
 Makes a loud noise and flashes violently when the countdown is over.
+
+
+**Uses:** `alert` to indicate when intermission has started / ended
 
 **Requires:** `mpv`, `playerctl`
 
@@ -64,3 +69,5 @@ Changes a LOT of annoying things like audio output, screen resolution, brightnes
 ### [mode_switcher_inhibitor](./mode_switcher_inhibitor)
 
 Prevent automatic sleeping while this process is alive.
+
+**Requires:** `dbus-python`
