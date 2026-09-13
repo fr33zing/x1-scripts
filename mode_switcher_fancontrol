@@ -2,6 +2,7 @@
 
 import time, sys, dbus, os, subprocess, json, pprint
 
+FAN_CONTROL = "/proc/acpi/ibm/fan"
 FAN_LEVELS = ["1", "2", "3", "4", "5", "6", "7", "full-speed"]
 FAN_LEVEL_OFF = "0"
 FAN_LEVEL_AUTO = "auto"
@@ -46,7 +47,7 @@ def adjust_fan_speed():
         fan_speed = max(fan_speed, i)
         print(f"{name}: {fan_speed_to_level(i)}")
 
-    os.system(f"echo {fan_speed_to_level(fan_speed)} > /proc/acpi/ibm/fan")
+    os.system(f"echo {fan_speed_to_level(fan_speed)} > {FAN_CONTROL}")
 
 
 def parent_alive():
@@ -66,4 +67,4 @@ while parent_alive():
 
 
 print(f"Resetting fan speed to level: {FAN_LEVEL_AUTO}")
-os.system(f"echo level {FAN_LEVEL_AUTO} > /proc/acpi/ibm/fan")
+os.system(f"echo level {FAN_LEVEL_AUTO} > {FAN_CONTROL}")
