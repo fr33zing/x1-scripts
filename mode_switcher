@@ -104,7 +104,11 @@ tv_mode () {
     set_audio_output $TV_AUDIO_OUTPUT $TV_AUDIO_VOLUME
 
     # Inhibit sleep
-    ~/scripts/mode_switcher_inhibitor "$$"
+    ~/scripts/mode_switcher_inhibitor "$$" &
+
+    # Make fans quiet
+    powerprofilesctl set power-saver
+    ~/scripts/mode_switcher_fancontrol "$$" 
 }
 
 
@@ -125,6 +129,9 @@ desktop_mode () {
     bluetoothctl connect $HEADPHONES_MAC
     sleep 5
     set_audio_output $DESKTOP_AUDIO_OUTPUT $DESKTOP_AUDIO_VOLUME
+
+    # Set power profile
+    powerprofilesctl set performance
 }
 
 

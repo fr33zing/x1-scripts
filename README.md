@@ -41,7 +41,6 @@ Pause everything, make a loud noise, and open VLC with the provided file.
 Pause everything, and display a countdown.
 Makes a loud noise and flashes violently when the countdown is over.
 
-
 **Uses:** `alert` to indicate when intermission has started / ended
 
 **Requires:** `mpv`, `playerctl`
@@ -65,9 +64,12 @@ Changes a LOT of annoying things like audio output, screen resolution, brightnes
 
 **Requires:** `bluetoothctl`, `qdbus6`, `wpctl`, `kscreen-doctor`
 
-
 ### [mode_switcher_inhibitor](./mode_switcher_inhibitor)
 
 Prevent automatic sleeping while this process is alive.
 
 **Requires:** `dbus-python`
+
+### [mode_switcher_fancontrol](./mode_switcher_fancontrol)
+
+Auto-manually controls fan speeds to reduce noise.
